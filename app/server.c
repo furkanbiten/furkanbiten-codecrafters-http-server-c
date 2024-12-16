@@ -6,6 +6,16 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+int endswith(const char* str, const char* suffix)
+{
+    if (!str || !suffix)
+        return 0;
+    size_t lenstr = strlen(str);
+    size_t lensuffix = strlen(suffix);
+    if (lensuffix > lenstr)
+        return 0;
+    return strncmp(str + lenstr - lensuffix, suffix, lensuffix) == 0;
+}
 
 int main()
 {
@@ -52,8 +62,29 @@ int main()
 
     int fd = accept(server_fd, (struct sockaddr*)&client_addr, &client_addr_len);
     printf("Client connected\n");
+    char recv_msg[100];
+    recv(fd, &recv_msg, 100, 0);
 
-    char *msg = "HTTP/1.1 200 OK\r\n\r\n";
+    // Extract info
+    char* req_line = strtok(recv_msg, "\r\n");
+    char* header = strtok(NULL, "\r\n");
+    char* body = strtok(NULL, "\r\n");
+
+    // Extract http request and url
+    char* http = strtok(req_line, " ");
+    char* maybe_url = strtok(NULL, " ");
+
+    char error[20];
+    if (endswith(maybe_url, (char*)".html") || endswith(maybe_url, (char*)"/")) {
+        strcpy(error, "200 OK");
+    } else {
+        strcpy(error, "404 Not Found");
+    }
+
+    char msg[] = "HTTP/1.1 ";
+    strcat(msg, error);
+    strcat(msg, "\r\n\r\n");
+
     send(fd, msg, strlen(msg), 0);
     close(server_fd);
 
