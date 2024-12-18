@@ -6,16 +6,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
-int endswith(const char* str, const char* suffix)
-{
-    if (!str || !suffix)
-        return 0;
-    size_t lenstr = strlen(str);
-    size_t lensuffix = strlen(suffix);
-    if (lensuffix > lenstr)
-        return 0;
-    return strncmp(str + lenstr - lensuffix, suffix, lensuffix) == 0;
-}
+#define RECV_SIZE 1024
 
 int main()
 {
@@ -62,30 +53,33 @@ int main()
 
     int fd = accept(server_fd, (struct sockaddr*)&client_addr, &client_addr_len);
     printf("Client connected\n");
-    char recv_msg[100];
-    recv(fd, &recv_msg, 100, 0);
+
+    char recv_msg[RECV_SIZE];
+    recv(fd, &recv_msg, RECV_SIZE, 0);
 
     // Extract info
-    char* req_line = strtok(recv_msg, "\r\n");
-    char* header = strtok(NULL, "\r\n");
-    char* body = strtok(NULL, "\r\n");
+    char* http = strtok(recv_msg, " ");
+    http = strtok(NULL, " ");
 
-    // Extract http request and url
-    char* http = strtok(req_line, " ");
-    char* maybe_url = strtok(NULL, " ");
+    if (strncmp(http, "/echo/", 6) == 0) {
+        char* echo_string = http + 6;
+        char response[1024];
 
-    char error[20];
-    if (endswith(maybe_url, (char*)".html") || endswith(maybe_url, (char*)"/")) {
-        strcpy(error, "200 OK");
+        sprintf(response,
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: "
+            "%ld\r\n\r\n%s",
+            strlen(echo_string), echo_string);
+        send(fd, response, strlen(response), 0);
+
+    } else if (strcmp(http, "/") == 0) {
+
+        const char* response = "HTTP/1.1 200 OK\r\n\r\n";
+        send(fd, response, strlen(response), 0);
+
     } else {
-        strcpy(error, "404 Not Found");
+        const char* response = "HTTP/1.1 404 Not Found\r\n\r\n";
+        send(fd, response, strlen(response), 0);
     }
-
-    char msg[] = "HTTP/1.1 ";
-    strcat(msg, error);
-    strcat(msg, "\r\n\r\n");
-
-    send(fd, msg, strlen(msg), 0);
     close(server_fd);
 
     return 0;
