@@ -58,8 +58,16 @@ int main()
     recv(fd, &recv_msg, RECV_SIZE, 0);
 
     // Extract info
-    char* http = strtok(recv_msg, " ");
+    char* http = strtok(recv_msg, "\r\n");
+    char* host = strtok(NULL, "\r\n");
+    char* agent = strtok(NULL, "\r\n");
+    http = strtok(http, " ");
     http = strtok(NULL, " ");
+    // printf("http: %s\n", http);
+
+    agent = strtok(agent, " ");
+    agent = strtok(NULL, " ");
+    // printf("agent: %s\n", agent);
 
     if (strncmp(http, "/echo/", 6) == 0) {
         char* echo_string = http + 6;
@@ -69,6 +77,15 @@ int main()
             "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: "
             "%ld\r\n\r\n%s",
             strlen(echo_string), echo_string);
+        send(fd, response, strlen(response), 0);
+
+    } else if (strncmp(http, "/user-agent", 11)==0) {
+        char response[1024];
+
+        sprintf(response,
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: "
+            "%ld\r\n\r\n%s",
+            strlen(agent), agent);
         send(fd, response, strlen(response), 0);
 
     } else if (strcmp(http, "/") == 0) {
