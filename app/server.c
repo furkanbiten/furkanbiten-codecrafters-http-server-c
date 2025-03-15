@@ -5,99 +5,133 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <unistd.h>
-#define RECV_SIZE 1024
 
-int main()
-{
-    // Disable output buffering
-    setbuf(stdout, NULL);
-    setbuf(stderr, NULL);
+void handle_client(int client_fd) {
+  // Read HTTP request
+  char buffer[1024];
+  int bytes_read = read(client_fd, buffer, sizeof(buffer) - 1);
+  if (bytes_read < 0) {
+    printf("Read failed: %s \n", strerror(errno));
+    close(client_fd);
+    return;
+  }
 
-    int server_fd, connfd, client_addr_len;
-    struct sockaddr_in client_addr;
+  buffer[bytes_read] = '\0';
+  // Extract URL path from request line
+  char method[16], path[256], version[16];
+  sscanf(buffer, "%s %s %s", method, path, version);
 
-    server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_fd == -1) {
-        printf("Socket creation failed: %s...\n", strerror(errno));
-        return 1;
+  // Check if the path is /user-agent
+  if (strcmp(path, "/user-agent") == 0) {
+    // Find the User-Agent header
+    char *user_agent = strstr(buffer, "User-Agent:");
+    if (user_agent) {
+      user_agent += strlen("User-Agent: ");
+      char *end_of_line = strstr(user_agent, "\r\n");
+
+      if (end_of_line) {
+        *end_of_line = '\0';
+        char response[1024];
+        int response_length =
+            snprintf(response, sizeof(response),
+                     "HTTP/1.1 200 OK\r\nContent-Type: "
+                     "text/plain\r\nContent-Length: %zu\r\n\r\n%s",
+                     strlen(user_agent), user_agent);
+        write(client_fd, response, response_length);
+      }
+    } else {
+      const char *response = "HTTP/1.1 400 Bad Request\r\n\r\n";
+      write(client_fd, response, strlen(response));
     }
+  } else if (strncmp(path, "/echo/", 6) == 0) {
+    const char *echo_str = path + 6;
+    char response[1024];
+    int response_length =
+        snprintf(response, sizeof(response),
+                 "HTTP/1.1 200 OK\r\nContent-Type: "
+                 "text/plain\r\nContent-Length: %zu\r\n\r\n%s",
+                 strlen(echo_str), echo_str);
+    write(client_fd, response, response_length);
+  } else if (strcmp(path, "/") == 0) {
+    const char *response =
+        "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: "
+        "13\r\n\r\nHello, world!";
+    write(client_fd, response, strlen(response));
+  } else {
+    const char *response = "HTTP/1.1 404 Not Found\r\n\r\n";
+    write(client_fd, response, strlen(response));
+  }
+  close(client_fd);
+}
 
-    // Since the tester restarts your program quite often, setting SO_REUSEADDR
-    // ensures that we don't run into 'Address already in use' errors
-    int reuse = 1;
-    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
-        printf("SO_REUSEADDR failed: %s \n", strerror(errno));
-        return 1;
+int main() {
+  // Disable output buffering
+  setbuf(stdout, NULL);
+  setbuf(stderr, NULL);
+  // You can use print statements as follows for debugging, they'll be visible when running tests.
+  printf("Logs from your program will appear here!\n");
+  int server_fd, client_fd, client_addr_len;
+
+  struct sockaddr_in client_addr;
+  server_fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (server_fd == -1) {
+    printf("Socket creation failed: %s...\n", strerror(errno));
+    return 1;
+  }
+  // Since the tester restarts your program quite often, setting SO_REUSEADDR
+  // ensures that we don't run into 'Address already in use' errors
+  int reuse = 1;
+  if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
+    printf("SO_REUSEADDR failed: %s \n", strerror(errno));
+    return 1;
+  }
+
+  struct sockaddr_in serv_addr = {
+      .sin_family = AF_INET,
+      .sin_port = htons(4221),
+      .sin_addr = {htonl(INADDR_ANY)},
+  };
+
+  if (bind(server_fd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) != 0) {
+    printf("Bind failed: %s \n", strerror(errno));
+    return 1;
+  }
+
+  int connection_backlog = 5;
+  if (listen(server_fd, connection_backlog) != 0) {
+    printf("Listen failed: %s \n", strerror(errno));
+    return 1;
+  }
+
+  printf("Waiting for a client to connect...\n");
+  client_addr_len = sizeof(client_addr);
+  while (1) {
+    client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_addr_len);
+
+    if (client_fd < 0) {
+      printf("Accept failed: %s \n", strerror(errno));
+      continue;
     }
-
-    struct sockaddr_in serv_addr = {
-        .sin_family = AF_INET,
-        .sin_port = htons(4221),
-        .sin_addr = { htonl(INADDR_ANY) },
-    };
-
-    if (bind(server_fd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) != 0) {
-        printf("Bind failed: %s \n", strerror(errno));
-        return 1;
-    }
-
-    int connection_backlog = 5;
-    if (listen(server_fd, connection_backlog) != 0) {
-        printf("Listen failed: %s \n", strerror(errno));
-        return 1;
-    }
-
-    printf("Waiting for a client to connect...\n");
-    client_addr_len = sizeof(client_addr);
-
-    int fd = accept(server_fd, (struct sockaddr*)&client_addr, &client_addr_len);
     printf("Client connected\n");
 
-    char recv_msg[RECV_SIZE];
-    recv(fd, &recv_msg, RECV_SIZE, 0);
-
-    // Extract info
-    char* http = strtok(recv_msg, "\r\n");
-    char* host = strtok(NULL, "\r\n");
-    char* agent = strtok(NULL, "\r\n");
-    http = strtok(http, " ");
-    http = strtok(NULL, " ");
-    // printf("http: %s\n", http);
-
-    agent = strtok(agent, " ");
-    agent = strtok(NULL, " ");
-    // printf("agent: %s\n", agent);
-
-    if (strncmp(http, "/echo/", 6) == 0) {
-        char* echo_string = http + 6;
-        char response[1024];
-
-        sprintf(response,
-            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: "
-            "%ld\r\n\r\n%s",
-            strlen(echo_string), echo_string);
-        send(fd, response, strlen(response), 0);
-
-    } else if (strncmp(http, "/user-agent", 11)==0) {
-        char response[1024];
-
-        sprintf(response,
-            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: "
-            "%ld\r\n\r\n%s",
-            strlen(agent), agent);
-        send(fd, response, strlen(response), 0);
-
-    } else if (strcmp(http, "/") == 0) {
-
-        const char* response = "HTTP/1.1 200 OK\r\n\r\n";
-        send(fd, response, strlen(response), 0);
-
+    pid_t pid = fork();
+    if (pid == 0) {
+      // Child process
+      close(server_fd);
+      handle_client(client_fd);
+      exit(0);
+    } else if (pid > 0) {
+      // Parent process
+      close(client_fd);
+      waitpid(-1, NULL, WNOHANG); // Clean up zombie processes
     } else {
-        const char* response = "HTTP/1.1 404 Not Found\r\n\r\n";
-        send(fd, response, strlen(response), 0);
+      printf("Fork failed: %s \n", strerror(errno));
+      close(client_fd);
     }
-    close(server_fd);
+  }
 
-    return 0;
+  close(server_fd);
+  return 0;
 }
