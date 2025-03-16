@@ -23,7 +23,7 @@ void handle_client(int client_fd)
 
     buffer[bytes_read] = '\0';
     // Extract URL path from request line
-    char method[16], path[256], version[16];
+    char method[16], path[256], version[16], body[1024];
     sscanf(buffer, "%s %s %s", method, path, version);
 
     // Check if the path is /user-agent
@@ -51,22 +51,33 @@ void handle_client(int client_fd)
         char file_path[100] = "";
         strcat(file_path, tmp_path);
         strcat(file_path, path + 7);
-        printf("file_path: %s", file_path);
-        FILE* fp = fopen(file_path, "r");
 
-        if (fp == NULL) {
-            write(client_fd, "HTTP/1.1 404 Not Found\r\n\r\n", 100);
-        } else {
-            char response[1024];
-            char buffer[256];
-            while (fgets(buffer, 1024, fp))
-                ;
+        if (strcmp(method, "POST") == 0) {
+            const char* stream =  "application/octet-stream\r\n\r\n";
+            char* body = strstr(buffer, stream);
+            body += strlen(stream);
+            printf("request body: %s", body);
+            FILE* fp = fopen(file_path, "w");
+            fprintf(fp, "%s", body);
+            write(client_fd, "HTTP/1.1 201 Created\r\n\r\n", 100);
 
-            int response_length = snprintf(response, sizeof(response),
-                "HTTP/1.1 200 OK\r\nContent-Type: "
-                "application/octet-stream\r\nContent-Length: %zu\r\n\r\n%s",
-                strlen(buffer), buffer);
-            write(client_fd, response, response_length);
+        } else if (strcmp(method, "GET") == 0){
+            FILE* fp = fopen(file_path, "r");
+
+            if (fp == NULL) {
+                write(client_fd, "HTTP/1.1 404 Not Found\r\n\r\n", 100);
+            } else {
+                char response[1024];
+                char buffer[256];
+                while (fgets(buffer, 1024, fp))
+                    ;
+
+                int response_length = snprintf(response, sizeof(response),
+                    "HTTP/1.1 200 OK\r\nContent-Type: "
+                    "application/octet-stream\r\nContent-Length: %zu\r\n\r\n%s",
+                    strlen(buffer), buffer);
+                write(client_fd, response, response_length);
+            }
         }
 
     } else if (strncmp(path, "/echo/", 6) == 0) {
