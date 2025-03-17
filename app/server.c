@@ -1,6 +1,7 @@
 #include <errno.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,11 +24,53 @@ void handle_client(int client_fd)
 
     buffer[bytes_read] = '\0';
     // Extract URL path from request line
-    char method[16], path[256], version[16], body[1024];
+    char method[16], path[256], version[16];
     sscanf(buffer, "%s %s %s", method, path, version);
+    printf("method: %s, path:%s, version:%s", method, path, version);
+    // Extract Encoding
+    const char* encoding_const = "Accept-Encoding: ";
+    char* encoding = strstr(buffer, encoding_const);
+    printf("encoding: %s\n", encoding);
 
-    // Check if the path is /user-agent
-    if (strcmp(path, "/user-agent") == 0) {
+    if (encoding != NULL) {
+        char* end_of_line = strstr(encoding, "\r\n");
+        printf("encoding: %s, end_of_line:%s", encoding, end_of_line);
+        if (end_of_line) {
+            *end_of_line = '\0';
+            encoding += strlen(encoding_const);
+            printf("encoding: %s\n", encoding);
+            char* single_encoding = strtok(encoding, ", ");
+            printf("single: %s\n", single_encoding);
+            bool compression = false;
+
+            while (single_encoding) {
+                printf("single: %s\n", single_encoding);
+                if (strcmp(single_encoding, "gzip") == 0) {
+                    compression = true;
+                    break;
+                }
+                single_encoding = strtok(NULL, ", ");
+            }
+
+            printf("compression: %d\n", compression);
+            if (compression) {
+                printf("encoding: %s, method: %s, path:%s\n", encoding, method, path);
+                encoding += strlen(encoding_const);
+                char response[1024];
+                int response_length = snprintf(response, sizeof(response),
+                    "HTTP/1.1 200 OK\r\nContent-Type: "
+                    "text/plain\r\nContent-Encoding: gzip\r\n\r\n");
+                write(client_fd, response, response_length);
+            } else {
+                char response[1024];
+                int response_length = snprintf(response, sizeof(response),
+                    "HTTP/1.1 200 OK\r\nContent-Type: "
+                    "text/plain\r\n\r\n");
+                write(client_fd, response, response_length);
+            }
+        }
+    } else if (strcmp(path, "/user-agent") == 0) {
+        // Check if the path is /user-agent
         // Find the User-Agent header
         char* user_agent = strstr(buffer, "User-Agent:");
         if (user_agent) {
@@ -51,9 +94,10 @@ void handle_client(int client_fd)
         char file_path[100] = "";
         strcat(file_path, tmp_path);
         strcat(file_path, path + 7);
+        printf("file_path:%s\n", file_path);
 
         if (strcmp(method, "POST") == 0) {
-            const char* stream =  "application/octet-stream\r\n\r\n";
+            const char* stream = "application/octet-stream\r\n\r\n";
             char* body = strstr(buffer, stream);
             body += strlen(stream);
             printf("request body: %s", body);
@@ -61,7 +105,7 @@ void handle_client(int client_fd)
             fprintf(fp, "%s", body);
             write(client_fd, "HTTP/1.1 201 Created\r\n\r\n", 100);
 
-        } else if (strcmp(method, "GET") == 0){
+        } else if (strcmp(method, "GET") == 0) {
             FILE* fp = fopen(file_path, "r");
 
             if (fp == NULL) {
@@ -79,7 +123,6 @@ void handle_client(int client_fd)
                 write(client_fd, response, response_length);
             }
         }
-
     } else if (strncmp(path, "/echo/", 6) == 0) {
         const char* echo_str = path + 6;
         char response[1024];
