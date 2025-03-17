@@ -8,8 +8,28 @@
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <zconf.h>
+#include <zlib.h>
 
 static char* tmp_path;
+
+static char* gzip_deflate(char* data, size_t data_len, size_t* gzip_len)
+{
+    z_stream stream = { 0 };
+    deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 0x1F, 8,
+        Z_DEFAULT_STRATEGY);
+    size_t max_len = deflateBound(&stream, data_len);
+    char* gzip_data = malloc(max_len);
+    memset(gzip_data, 0, max_len);
+    stream.next_in = (Bytef*)data;
+    stream.avail_in = data_len;
+    stream.next_out = (Bytef*)gzip_data;
+    stream.avail_out = max_len;
+    deflate(&stream, Z_FINISH);
+    *gzip_len = stream.total_out;
+    deflateEnd(&stream);
+    return gzip_data;
+}
 
 void handle_client(int client_fd)
 {
@@ -26,25 +46,25 @@ void handle_client(int client_fd)
     // Extract URL path from request line
     char method[16], path[256], version[16];
     sscanf(buffer, "%s %s %s", method, path, version);
-    printf("method: %s, path:%s, version:%s", method, path, version);
+    // printf("method: %s, path:%s, version:%s", method, path, version);
     // Extract Encoding
     const char* encoding_const = "Accept-Encoding: ";
     char* encoding = strstr(buffer, encoding_const);
-    printf("encoding: %s\n", encoding);
+    // printf("encoding: %s\n", encoding);
 
     if (encoding != NULL) {
         char* end_of_line = strstr(encoding, "\r\n");
-        printf("encoding: %s, end_of_line:%s", encoding, end_of_line);
+        // printf("encoding: %s, end_of_line:%s", encoding, end_of_line);
         if (end_of_line) {
             *end_of_line = '\0';
             encoding += strlen(encoding_const);
-            printf("encoding: %s\n", encoding);
+            // printf("encoding: %s\n", encoding);
             char* single_encoding = strtok(encoding, ", ");
-            printf("single: %s\n", single_encoding);
+            // printf("single: %s\n", single_encoding);
             bool compression = false;
 
             while (single_encoding) {
-                printf("single: %s\n", single_encoding);
+                // printf("single: %s\n", single_encoding);
                 if (strcmp(single_encoding, "gzip") == 0) {
                     compression = true;
                     break;
@@ -57,10 +77,29 @@ void handle_client(int client_fd)
                 printf("encoding: %s, method: %s, path:%s\n", encoding, method, path);
                 encoding += strlen(encoding_const);
                 char response[1024];
-                int response_length = snprintf(response, sizeof(response),
-                    "HTTP/1.1 200 OK\r\nContent-Type: "
-                    "text/plain\r\nContent-Encoding: gzip\r\n\r\n");
-                write(client_fd, response, response_length);
+                if (strncmp(path, "/echo/", 6) == 0) {
+                    char* echo_str = path + 6;
+                    // printf("echo: %s\n", echo_str);
+                    char *response_body;
+                    uLong body_len;
+                    response_body = gzip_deflate(echo_str, strlen(echo_str), &body_len);
+                    // char compressed_body[4096];
+                    // compress_gzip(compressed_body, echo_str);
+                    printf("cmp: %X", response_body);
+                    int response_length = snprintf(response, sizeof(response),
+                        "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\n"
+                        "Content-Type: text/plain\r\nContent-Length: %zu\r\n\r\n",
+                        body_len);
+                    send(client_fd, response, strlen(response), 0);
+                    send(client_fd, response_body, body_len, 0);
+                    // write(client_fd, response, response_length);
+
+                } else {
+                    int response_length = snprintf(response, sizeof(response),
+                        "HTTP/1.1 200 OK\r\nContent-Type: "
+                        "text/plain\r\nContent-Encoding: gzip\r\n\r\n");
+                    write(client_fd, response, response_length);
+                }
             } else {
                 char response[1024];
                 int response_length = snprintf(response, sizeof(response),
